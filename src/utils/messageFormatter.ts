@@ -41,7 +41,7 @@ export class MessageFormatter {
       });
       message += `${index + 1}. $${expense.amount.toFixed(2)} - ${
         expense.category
-      } (${timeStr})\n`;
+      }: ${expense.description} (${timeStr})\n`;
     });
 
     return message;
@@ -77,6 +77,7 @@ export class MessageFormatter {
       `\`\`\`\n` +
       `amount:300\n` +
       `category: hair remover\n` +
+      `description: hair removal cream\n` +
       `Date:02 aug\n` +
       `\`\`\`\n\n` +
       `*Available commands:*\n` +
@@ -85,14 +86,19 @@ export class MessageFormatter {
       `• /clear - Clear all expenses\n` +
       `• /clear YYYY-MM-DD - Clear expenses for specific date\n` +
       `• /clear YYYY-MM-DD YYYY-MM-DD - Clear expenses for date range\n` +
+      `• /categories - Show all categories and totals\n` +
+      `• /category <name> - Show expenses for specific category\n` +
+      `• /addcategory <name> - Create a new category\n` +
+      `• /suggest <term> - Search for categories\n` +
       `• /help - Show this help message\n` +
       `• /stats - Show overall statistics\n` +
       `• /settings - Show current bot settings\n\n` +
       `*Notes:*\n` +
       `• Date format: DD MMM (e.g., "02 aug", "15 dec")\n` +
       `• If no year is specified, current year is assumed\n` +
-      `• Categories are case-sensitive\n` +
-      `• Use /clear carefully - this action cannot be undone`
+      `• Categories are case-insensitive\n` +
+      `• Use /clear carefully - this action cannot be undone\n` +
+      `• Default categories are provided as templates`
     );
   }
 
@@ -111,6 +117,7 @@ export class MessageFormatter {
       `✅ *Expense Added Successfully!*\n\n` +
       `💰 Amount: $${expense.amount.toFixed(2)}\n` +
       `📂 Category: ${expense.category}\n` +
+      `📝 Description: ${expense.description}\n` +
       `📅 Date: ${expense.date.toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",

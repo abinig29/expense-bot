@@ -63,8 +63,27 @@ function createBot() {
 
     bot = new TelegramBot(botToken, botOptions);
 
-    // Initialize bot handler
-    const botHandler = new BotHandler(bot);
+    // Initialize bot handler with database
+    async function initializeBot() {
+      try {
+        const botHandler = new BotHandler(bot);
+
+        // Initialize database tables
+        const storage = (botHandler as any).storage;
+        if (storage && storage.initialize) {
+          await storage.initialize();
+          console.log("✅ Database initialized successfully");
+        }
+
+        return botHandler;
+      } catch (error) {
+        console.error("❌ Failed to initialize bot:", error);
+        process.exit(1);
+      }
+    }
+
+    // Initialize the bot
+    initializeBot();
 
     // Handle bot errors
     bot.on("error", (error) => {

@@ -1,20 +1,23 @@
 import TelegramBot from "node-telegram-bot-api";
 import { ExpenseParser } from "../utils/expenseParser";
 import { MessageFormatter } from "../utils/messageFormatter";
-import { ExpenseStorage } from "../services/expenseStorage";
+import { PostgresStorage } from "../services/postgresStorage";
+import { CategoryService } from "../services/categoryService";
 import { ConfigService } from "../services/configService";
 import { Expense, ParsedExpense, BotSettings } from "../types";
 
 export class BotHandler {
   private bot: TelegramBot;
-  private storage: ExpenseStorage;
+  private storage: PostgresStorage;
+  private categoryService: CategoryService;
   private configService: ConfigService;
   private pendingConfirmations: Map<number, { action: string; data: any }> =
     new Map();
 
   constructor(bot: TelegramBot) {
     this.bot = bot;
-    this.storage = new ExpenseStorage();
+    this.storage = new PostgresStorage();
+    this.categoryService = CategoryService.getInstance();
     this.configService = ConfigService.getInstance();
     this.setupHandlers();
   }
@@ -35,6 +38,16 @@ export class BotHandler {
     );
     this.bot.onText(/\/settings/, (msg) => this.handleSettings(msg));
     this.bot.onText(/\/debug/, (msg) => this.handleDebug(msg));
+    this.bot.onText(/\/categories/, (msg) => this.handleCategories(msg));
+    this.bot.onText(/\/category(?:\s+(.+))?/, (msg, match) =>
+      this.handleCategoryFilter(msg, match)
+    );
+    this.bot.onText(/\/addcategory(?:\s+(.+))?/, (msg, match) =>
+      this.handleAddCategory(msg, match)
+    );
+    this.bot.onText(/\/suggest(?:\s+(.+))?/, (msg, match) =>
+      this.handleCategorySuggestions(msg, match)
+    );
   }
 
   private async handleMessage(msg: TelegramBot.Message): Promise<void> {
@@ -111,7 +124,7 @@ export class BotHandler {
     chatId: number,
     topicId?: number
   ): Promise<void> {
-    const parsedExpense = ExpenseParser.parseMessage(messageText);
+    const parsedExpense = await ExpenseParser.parseMessage(messageText);
 
     if (!parsedExpense) {
       await this.bot.sendMessage(
@@ -134,7 +147,7 @@ export class BotHandler {
     };
 
     // Store the expense
-    this.storage.addExpense(expense);
+    await this.storage.addExpense(expense);
 
     // Send confirmation only if enabled
     if (this.configService.isConfirmationEnabled()) {
@@ -153,7 +166,9 @@ export class BotHandler {
     chatId: number,
     topicId?: number
   ): Promise<void> {
-    const parsedExpenses = ExpenseParser.parseMultipleExpenses(messageText);
+    const parsedExpenses = await ExpenseParser.parseMultipleExpenses(
+      messageText
+    );
 
     if (parsedExpenses.length === 0) {
       await this.bot.sendMessage(
@@ -176,7 +191,7 @@ export class BotHandler {
         chatId,
         topicId,
       };
-      this.storage.addExpense(expense);
+      await this.storage.addExpense(expense);
       storedExpenses.push(expense);
     }
 
@@ -315,14 +330,14 @@ export class BotHandler {
       let count = 0;
 
       if (data.date) {
-        count = this.storage.clearExpensesForDate(data.date);
+        count = await this.storage.clearExpensesForDate(data.date);
         await this.bot.sendMessage(
           chatId,
           MessageFormatter.formatClearConfirmation(count, data.date),
           { parse_mode: "Markdown" }
         );
       } else if (data.startDate && data.endDate) {
-        count = this.storage.clearExpensesForDateRange(
+        count = await this.storage.clearExpensesForDateRange(
           data.startDate,
           data.endDate
         );
@@ -336,8 +351,8 @@ export class BotHandler {
           { parse_mode: "Markdown" }
         );
       } else {
-        count = this.storage.getExpenseCount();
-        this.storage.clearAll();
+        count = await this.storage.getExpenseCount();
+        await this.storage.clearAll();
         await this.bot.sendMessage(
           chatId,
           MessageFormatter.formatClearConfirmation(count),
@@ -374,7 +389,8 @@ export class BotHandler {
       `💡 *New Features:*\n` +
       `• Use /clear to remove expenses\n` +
       `• Confirmation messages can be disabled\n` +
-      `• Support for forum topics`;
+      `• Support for forum topics\n` +
+      `• Category management with templates`;
 
     await this.bot.sendMessage(chatId, welcomeMessage, {
       parse_mode: "Markdown",
@@ -418,7 +434,7 @@ export class BotHandler {
         targetDate.setHours(0, 0, 0, 0);
       }
 
-      const summary = this.storage.getDailySummary(targetDate);
+      const summary = await this.storage.getDailySummary(targetDate);
       const summaryMessage = MessageFormatter.formatDailySummary(summary);
 
       await this.bot.sendMessage(chatId, summaryMessage, {
@@ -440,7 +456,7 @@ export class BotHandler {
     const chatId = msg.chat.id;
 
     try {
-      const allExpenses = this.storage.getAllExpenses();
+      const allExpenses = await this.storage.getAllExpenses();
 
       if (allExpenses.length === 0) {
         await this.bot.sendMessage(
@@ -460,7 +476,7 @@ export class BotHandler {
       // Get this month's total
       const now = new Date();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const thisMonthTotal = this.storage.getTotalForDateRange(
+      const thisMonthTotal = await this.storage.getTotalForDateRange(
         startOfMonth,
         now
       );
@@ -490,7 +506,7 @@ export class BotHandler {
   private async handleDebug(msg: TelegramBot.Message): Promise<void> {
     const chatId = msg.chat.id;
     try {
-      const allExpenses = this.storage.getAllExpenses();
+      const allExpenses = await this.storage.getAllExpenses();
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
@@ -518,6 +534,215 @@ export class BotHandler {
         chatId,
         MessageFormatter.formatErrorMessage(
           "An error occurred while fetching debug information."
+        ),
+        { parse_mode: "Markdown" }
+      );
+    }
+  }
+
+  private async handleCategories(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+
+    try {
+      const categories = await this.categoryService.getAllCategories();
+      const usageStats = await this.categoryService.getCategoryUsageStats();
+
+      if (categories.length === 0) {
+        await this.bot.sendMessage(
+          chatId,
+          "📂 *Categories*\n\nNo categories found. Add some expenses first!",
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      let message = "📂 *All Categories*\n\n";
+
+      categories.forEach((category) => {
+        const stats = usageStats[category.name] || { count: 0, total: 0 };
+        const icon = category.icon || "📦";
+        const isDefault = category.is_default ? " (default)" : "";
+        message += `${icon} **${category.name}**${isDefault}\n`;
+        message += `   💰 $${stats.total.toFixed(2)} (${
+          stats.count
+        } expenses)\n\n`;
+      });
+
+      message +=
+        "💡 Use `/category <category_name>` to see expenses for a specific category.";
+
+      await this.bot.sendMessage(chatId, message, { parse_mode: "Markdown" });
+    } catch (error) {
+      console.error("Error handling categories command:", error);
+      await this.bot.sendMessage(
+        chatId,
+        MessageFormatter.formatErrorMessage(
+          "An error occurred while fetching categories."
+        ),
+        { parse_mode: "Markdown" }
+      );
+    }
+  }
+
+  private async handleCategoryFilter(
+    msg: TelegramBot.Message,
+    match: RegExpExecArray | null
+  ): Promise<void> {
+    const chatId = msg.chat.id;
+
+    try {
+      if (!match || !match[1]) {
+        await this.bot.sendMessage(
+          chatId,
+          "❌ *Category Filter*\n\nPlease specify a category name.\n\nExample: `/category food`",
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      const categoryName = match[1].trim();
+      const expenses = await this.storage.getExpensesByCategory(categoryName);
+
+      if (expenses.length === 0) {
+        await this.bot.sendMessage(
+          chatId,
+          `📂 *Category: ${categoryName}*\n\nNo expenses found for this category.`,
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      const totalAmount = expenses.reduce(
+        (sum, expense) => sum + expense.amount,
+        0
+      );
+
+      let message = `📂 *Category: ${categoryName}*\n\n`;
+      message += `💰 Total: $${totalAmount.toFixed(2)}\n`;
+      message += `📝 Count: ${expenses.length} expenses\n\n`;
+      message += `*Expenses:*\n`;
+
+      expenses.forEach((expense, index) => {
+        const dateStr = expense.date.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+        message += `${index + 1}. $${expense.amount.toFixed(2)} - ${
+          expense.description
+        } (${dateStr})\n`;
+      });
+
+      await this.bot.sendMessage(chatId, message, { parse_mode: "Markdown" });
+    } catch (error) {
+      console.error("Error handling category filter command:", error);
+      await this.bot.sendMessage(
+        chatId,
+        MessageFormatter.formatErrorMessage(
+          "An error occurred while filtering by category."
+        ),
+        { parse_mode: "Markdown" }
+      );
+    }
+  }
+
+  private async handleAddCategory(
+    msg: TelegramBot.Message,
+    match: RegExpExecArray | null
+  ): Promise<void> {
+    const chatId = msg.chat.id;
+
+    try {
+      if (!match || !match[1]) {
+        await this.bot.sendMessage(
+          chatId,
+          "❌ *Add Category*\n\nPlease specify a category name.\n\nExample: `/addcategory Gaming`",
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      const categoryName = match[1].trim();
+
+      // Check if category already exists
+      const existing = await this.categoryService.getCategoryByName(
+        categoryName
+      );
+      if (existing) {
+        await this.bot.sendMessage(
+          chatId,
+          `❌ *Category Already Exists*\n\nCategory "${categoryName}" already exists.`,
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      // Create new category
+      const newCategory = await this.categoryService.createCategory(
+        categoryName
+      );
+
+      await this.bot.sendMessage(
+        chatId,
+        `✅ *Category Created*\n\n📂 **${newCategory.name}**\n${newCategory.icon} Icon: ${newCategory.icon}\n🎨 Color: ${newCategory.color}`,
+        { parse_mode: "Markdown" }
+      );
+    } catch (error) {
+      console.error("Error handling add category command:", error);
+      await this.bot.sendMessage(
+        chatId,
+        MessageFormatter.formatErrorMessage(
+          "An error occurred while creating the category."
+        ),
+        { parse_mode: "Markdown" }
+      );
+    }
+  }
+
+  private async handleCategorySuggestions(
+    msg: TelegramBot.Message,
+    match: RegExpExecArray | null
+  ): Promise<void> {
+    const chatId = msg.chat.id;
+
+    try {
+      if (!match || !match[1]) {
+        await this.bot.sendMessage(
+          chatId,
+          "❌ *Category Suggestions*\n\nPlease specify a search term.\n\nExample: `/suggest food`",
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      const searchTerm = match[1].trim();
+      const suggestions = await ExpenseParser.getCategorySuggestions(
+        searchTerm
+      );
+
+      if (suggestions.length === 0) {
+        await this.bot.sendMessage(
+          chatId,
+          `🔍 *Category Suggestions*\n\nNo categories found matching "${searchTerm}".\n\n💡 Try a different search term or use /addcategory to create a new one.`,
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      let message = `🔍 *Category Suggestions for "${searchTerm}"*\n\n`;
+      suggestions.forEach((category, index) => {
+        message += `${index + 1}. ${category}\n`;
+      });
+
+      message += "\n💡 Use one of these categories in your expense message.";
+
+      await this.bot.sendMessage(chatId, message, { parse_mode: "Markdown" });
+    } catch (error) {
+      console.error("Error handling category suggestions command:", error);
+      await this.bot.sendMessage(
+        chatId,
+        MessageFormatter.formatErrorMessage(
+          "An error occurred while searching for categories."
         ),
         { parse_mode: "Markdown" }
       );

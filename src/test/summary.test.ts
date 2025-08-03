@@ -25,6 +25,7 @@ function testSummary() {
   storage.addExpense({
     amount: 25.5,
     category: "coffee",
+    description: "Morning coffee",
     date: today,
     userId: 123,
     messageId: 1,
@@ -34,6 +35,7 @@ function testSummary() {
   storage.addExpense({
     amount: 150.0,
     category: "groceries",
+    description: "Weekly grocery shopping",
     date: today,
     userId: 123,
     messageId: 2,
@@ -44,6 +46,7 @@ function testSummary() {
   storage.addExpense({
     amount: 75.0,
     category: "dinner",
+    description: "Restaurant dinner",
     date: yesterday,
     userId: 123,
     messageId: 3,

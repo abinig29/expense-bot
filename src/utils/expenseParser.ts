@@ -1,13 +1,22 @@
 import { ParsedExpense } from "../types";
+import { CategoryService } from "../services/categoryService";
 
 export class ExpenseParser {
+  /**
+   * Get category service instance (lazy initialization)
+   */
+  private static get categoryService() {
+    return CategoryService.getInstance();
+  }
+
   /**
    * Parse expense message in the format:
    * amount:300
    * category: hair remover
+   * description: hair removal cream
    * Date:02 aug
    */
-  static parseMessage(message: string): ParsedExpense | null {
+  static async parseMessage(message: string): Promise<ParsedExpense | null> {
     try {
       const lines = message
         .split("\n")
@@ -16,6 +25,7 @@ export class ExpenseParser {
 
       let amount: number | null = null;
       let category: string | null = null;
+      let description: string | null = null;
       let date: Date | null = null;
 
       for (const line of lines) {
@@ -38,6 +48,14 @@ export class ExpenseParser {
           }
         }
 
+        // Parse description
+        if (lowerLine.startsWith("description:")) {
+          const descriptionStr = line.substring(12).trim();
+          if (descriptionStr.length > 0) {
+            description = descriptionStr;
+          }
+        }
+
         // Parse date
         if (lowerLine.startsWith("date:")) {
           const dateStr = line.substring(5).trim();
@@ -53,6 +71,7 @@ export class ExpenseParser {
         return {
           amount,
           category,
+          description: description || category, // Use category as description if not provided
           date,
         };
       }
@@ -68,7 +87,9 @@ export class ExpenseParser {
    * Parse multiple expenses from a single message
    * Each expense block should be separated by blank lines
    */
-  static parseMultipleExpenses(message: string): ParsedExpense[] {
+  static async parseMultipleExpenses(
+    message: string
+  ): Promise<ParsedExpense[]> {
     try {
       const expenses: ParsedExpense[] = [];
 
@@ -78,7 +99,7 @@ export class ExpenseParser {
         .filter((block) => block.trim().length > 0);
 
       for (const block of blocks) {
-        const expense = this.parseMessage(block);
+        const expense = await this.parseMessage(block);
         if (expense) {
           expenses.push(expense);
         }
@@ -99,6 +120,32 @@ export class ExpenseParser {
       .split(/\n\s*\n/)
       .filter((block) => block.trim().length > 0);
     return blocks.length > 1;
+  }
+
+  /**
+   * Get category suggestions based on input
+   */
+  static async getCategorySuggestions(input: string): Promise<string[]> {
+    try {
+      const categories = await this.categoryService.searchCategories(input);
+      return categories.map((cat) => cat.name).slice(0, 5); // Return top 5 matches
+    } catch (error) {
+      console.error("Error getting category suggestions:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Get all available categories
+   */
+  static async getAllCategories(): Promise<string[]> {
+    try {
+      const categories = await this.categoryService.getAllCategories();
+      return categories.map((cat) => cat.name);
+    } catch (error) {
+      console.error("Error getting all categories:", error);
+      return [];
+    }
   }
 
   /**
