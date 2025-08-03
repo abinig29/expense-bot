@@ -12,10 +12,12 @@
     "test-summary": "ts-node src/test/summary.test.ts",
     "setup": "node setup.js",
     "setup-db": "node setup-database.js",
+    "setup-gemini": "node setup-gemini.js",
     "migrate": "node migrate-database.js",
     "fix-constraints": "node fix-constraints.js",
     "test-connection": "node test-connection.js",
     "test-database": "node test-database.js",
+    "test-gemini": "node test-gemini.js",
     "test-bot": "node simple-test-bot.js"
   },
   "keywords": [
@@ -27,15 +29,16 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "node-telegram-bot-api": "^0.64.0",
+    "@google/generative-ai": "^0.24.1",
     "dotenv": "^16.3.1",
+    "node-telegram-bot-api": "^0.64.0",
     "pg": "^8.11.3"
   },
   "devDependencies": {
     "@types/node": "^20.8.0",
     "@types/node-telegram-bot-api": "^0.64.0",
     "@types/pg": "^8.10.9",
-    "typescript": "^5.2.0",
-    "ts-node": "^10.9.0"
+    "ts-node": "^10.9.0",
+    "typescript": "^5.2.0"
   }
 }
