@@ -3,6 +3,7 @@ import { ExpenseParser } from "../utils/expenseParser";
 import { MessageFormatter } from "../utils/messageFormatter";
 import { PostgresStorage } from "../services/postgresStorage";
 import { CategoryService } from "../services/categoryService";
+import { GeminiAIService } from "../services/geminiAIService";
 import { ConfigService } from "../services/configService";
 import { Expense, ParsedExpense, BotSettings } from "../types";
 
@@ -10,6 +11,7 @@ export class BotHandler {
   private bot: TelegramBot;
   private storage: PostgresStorage;
   private categoryService: CategoryService;
+  private aiService: GeminiAIService;
   private configService: ConfigService;
   private pendingConfirmations: Map<number, { action: string; data: any }> =
     new Map();
@@ -18,6 +20,7 @@ export class BotHandler {
     this.bot = bot;
     this.storage = new PostgresStorage();
     this.categoryService = CategoryService.getInstance();
+    this.aiService = new GeminiAIService();
     this.configService = ConfigService.getInstance();
     this.setupHandlers();
   }
@@ -66,6 +69,12 @@ export class BotHandler {
 
     // Skip if it's a command
     if (messageText.startsWith("/")) return;
+
+    // Check if message mentions AI
+    if (this.isAIMessage(messageText)) {
+      await this.handleAIMessage(msg, messageText, userId, chatId, topicId);
+      return;
+    }
 
     // Check if it looks like an expense message
     if (ExpenseParser.isExpenseMessage(messageText)) {
@@ -770,6 +779,90 @@ export class BotHandler {
       return date;
     } catch (error) {
       return null;
+    }
+  }
+
+  /**
+   * Check if message contains AI-related keywords
+   */
+  private isAIMessage(message: string): boolean {
+    const aiKeywords = [
+      "ai",
+      "assistant",
+      "help me",
+      "advice",
+      "suggest",
+      "recommend",
+    ];
+    const lowerMessage = message.toLowerCase();
+    return aiKeywords.some((keyword) => lowerMessage.includes(keyword));
+  }
+
+  /**
+   * Handle AI conversation messages
+   */
+  private async handleAIMessage(
+    msg: TelegramBot.Message,
+    messageText: string,
+    userId: number,
+    chatId: number,
+    topicId?: number
+  ): Promise<void> {
+    try {
+      console.log(`🤖 AI conversation from user ${userId}: ${messageText}`);
+
+      // Get AI response
+      const aiResponse = await this.aiService.processConversation(
+        messageText,
+        userId
+      );
+
+      // Try to send with markdown first, fallback to plain text if it fails
+      try {
+        await this.bot.sendMessage(chatId, aiResponse, {
+          parse_mode: "Markdown",
+          reply_to_message_id: msg.message_id,
+          message_thread_id: topicId,
+        });
+      } catch (markdownError) {
+        console.log("Markdown parsing failed, sending as plain text");
+        // Send as plain text if markdown fails
+        await this.bot.sendMessage(chatId, aiResponse, {
+          reply_to_message_id: msg.message_id,
+          message_thread_id: topicId,
+        });
+      }
+    } catch (error) {
+      console.error("Error handling AI message:", error);
+
+      let errorMessage =
+        "🤖 Sorry, I encountered an error while processing your request. Please try again.";
+
+      // Provide more specific error messages
+      if (
+        error.message.includes("ETIMEDOUT") ||
+        error.message.includes("timeout")
+      ) {
+        errorMessage =
+          "🤖 I'm having trouble connecting to my AI brain right now. This might be due to network issues. Please try again in a moment!";
+      } else if (
+        error.message.includes("API key") ||
+        error.message.includes("authentication")
+      ) {
+        errorMessage =
+          "🤖 There's an issue with my AI configuration. Please contact the bot administrator.";
+      } else if (
+        error.message.includes("quota") ||
+        error.message.includes("limit")
+      ) {
+        errorMessage =
+          "🤖 I've reached my AI usage limit for now. Please try again later!";
+      }
+
+      await this.bot.sendMessage(chatId, errorMessage, {
+        reply_to_message_id: msg.message_id,
+        message_thread_id: topicId,
+      });
     }
   }
 }
